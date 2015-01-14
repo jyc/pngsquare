@@ -1,0 +1,2 @@
+heap.o: src/heap.c src/heap.h
+main.o: src/main.c src/queue.h src/heap.h

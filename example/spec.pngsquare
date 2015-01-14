@@ -1,0 +1,14 @@
+name textures
+png images/textures.png
+c src/textures.c
+h src/textures.h
+hi textures.h
+from images
+unit 16
+
+blob_0
+blob_1
+enemy_0
+enemy_1
+tile_normal
+tile_spikes

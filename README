@@ -1,0 +1,106 @@
+# pngsquare
+
+pngsquare packs PNGs into a square, then outputs:
+
+-   the resulting PNG
+-   a C source file exposing
+    -   functions to load and unload that PNG into an SDL hardware texture
+        object
+    -   a structure type that can contain the loaded PNG's hardware texture and
+        rectangles pointing to the locations of the packed PNGs within the
+        texture
+-   the corresponding C header file
+
+There already exist tools that do the same thing, but I wrote this tool because
+I wanted some simple free/libre command-line software that would accomplish
+exactly what I needed.
+
+Because of the current output format, pngsquare will work best for you if you
+are using PNG sprites and SDL2 hardware rendering. More output formats will be
+added in the future, but if your needs are not met by pngsquare, the
+aforementioned other tools would definitely work better for you in the time
+being.
+
+# Dependencies
+
+-   A C99 compiler
+-   The FreeImage 3 library (available in the Arch Linux, Debian, homebrew, etc.
+    repositories as `freeimage`)
+
+# Usage
+
+pngsquare is a command-line tool that takes the path to a pngsquare 
+specification file as its one argument:
+
+    pngsquare <path to specification file>
+
+# Specification format
+
+The directives should be specified in the exact example order for now. Parsing
+different orders shouldn't be too hard to add - I should implement that soon!
+
+This is the specification file from the `examples/` directory:
+
+    name textures
+    png images/textures.png
+    c src/textures.c
+    h src/textures.h
+    hi textures.h
+    from images
+    unit 16
+
+    blob_0
+    blob_1
+    enemy_0
+    enemy_1
+    tile_normal
+    tile_spikes
+
+It takes the files `blob_0.png`, `blob_1.png`, etc., from the `images` directory
+and puts them into the square PNG located at `images/textures.png`. The C source
+and header files are similarly specified with the `c` and `h` directives. The
+`hi` directive tells pngsquare where the include path of the header file from
+the source file will be. The name of the types exposed in `textures.h` are
+based on the `name` directive, and for this example will be:
+
+    struct textures {
+        SDL_Texture *t;
+
+        SDL_Rect *blob_0;
+        SDL_Rect *blob_1;
+        SDL_Rect *enemy_0;
+        SDL_Rect *enemy_1;
+        SDL_Rect *tile_normal;
+        SDL_Rect *tile_spikes;
+    };
+
+    struct textures *textures_load (SDL_Renderer *renderer);
+    void textures_unload (struct textures *pack);
+
+The `unit` directive is probably the only tricky one. You should set it to the
+greatest common divisor of your input images. For example, if you have 32x32
+character sprites and 64x64 tiles, you could set it to 32. It specifies the
+grid the heuristic will use to position the images. It'll work even set to 1,
+but the heuristic will run faster when it is set higher.
+
+Don't worry about optimizing it, the heuristic shouldn't take that long anyway.
+
+# Placement heuristic
+
+Optimal rectangle packing is NP-hard. pngsquare implements a simple, greedy
+heuristic. Inputs are sorted in order of decreasing maximum side length then
+placed at the available point that is closest to the origin. Closeness to the
+origin is likewise determined by the maximum of the point's x and y values.
+
+I am reasonably sure that the implementation is O(n^2) with the number of input
+files, but I could be wrong.
+
+The heuristic does not always create optimal packings, but it works pretty well
+for its intended inputs, i.e, images that are either square or that can be
+evenly divided into few squares - that is, the textures I wrote this program to
+pack for me. I am sure that there are inputs on which it fails miserably, or
+inputs that cause it to take a very long time.
+
+Some alternative tools implement fancier heuristics, if you absolutely need the
+smallest texture file. For now, pngsquare works well enough for my purposes. If
+it can help you too, so much the better!
