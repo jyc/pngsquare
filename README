@@ -24,7 +24,7 @@ being.
 # Dependencies
 
 -   A C99 compiler
--   The FreeImage 3 library (available in the Arch Linux, Debian, homebrew, etc.
+-   The FreeImage 3 library (available in the Arch Linux, Debian, Homebrew, etc.
     repositories as `freeimage`)
 
 # Usage
