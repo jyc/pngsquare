@@ -14,7 +14,7 @@ struct textures {
     SDL_Rect *tile_spikes;
 };
 
-struct textures *textures_load (SDL_Renderer *renderer);
+struct textures *textures_load(SDL_Renderer *renderer);
 void textures_unload (struct textures *pack);
 
 #endif

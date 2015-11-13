@@ -8,7 +8,7 @@
 static const char *PNG_PATH = "images/textures.png";
 
 struct textures *
-textures_load (SDL_Renderer *renderer)
+textures_load(SDL_Renderer *renderer)
 {
     struct textures *pack = malloc(sizeof(struct textures));
     assert(pack != NULL);

@@ -15,50 +15,111 @@
 
 #define MAX_SPEC_LINE_LEN 1024
 
+// Define the type of a queue of inputs.
+// See queue.h and OpenBSD's documentation for details.
 SIMPLEQ_HEAD(inputshd, input);
 
+/**
+ * An [input] represents an image we are packing.
+ * The [at] field is initially null but eventually contains the [posn] in the
+ * packed image at which this image is placed.
+ */
 struct input {
+    /**
+     * [name] is the filename of the image without the file extension (which is
+     * always a PNG for pngsquare). Specified in the .pngsquare file. Becomes
+     * the name ofthe field in the textures structure, so it should be a valid
+     * C identifier name.
+     */
     char *name;
-    FIBITMAP *bitmap;
-    struct posn *at;
-    unsigned w;
-    unsigned h;
 
+    FIBITMAP *bitmap; //!< [bitmap] is the actual image data.
+    /**
+     * [at] is initially null but is set to the [posn] in the packed image at
+     * which this image is placed by the packing procedure.
+     */
+    struct posn *at;
+
+    unsigned w; //!< [w] is the width of the image in pixels.
+    unsigned h; //!< [h] is the height of the image in pixels.
+
+    // A pointer to the next item in the input queue. See queue.h for details.
     SIMPLEQ_ENTRY(input) entries;
 };
 
+/**
+ * A [spec] structure contains the parsed data from the .pngsquare file given
+ * as the argument to pngsquare. See the README for information about
+ * specification files.
+ */
 struct spec {
-    char *name;
-    char *png;
-    char *c;
-    char *h;
-    char *hi;
-    char *from;
-    int unit;
+    char *name; //!< [name] is used to name the struct and functions in generated code.
+    char *png; //!< [png] is the path to the packed PNG.
+    char *c; //!< [c] is the path to the generated C code.
+    char *h; //!< [h] is the path to the generated C header.
+    char *hi; //!< [hi] is the include path that the generated C code should use to load the C header.
+    char *from; //!< [from] is the path to the directory where the images to pack are stored.
+    int unit; //!< [unit] is the side length of the pixel square to use in the heuristic. See README for details.
 
-    struct inputshd inputs;
+    struct inputshd inputs; //!< The queue of [input]s to process.
 };
 
+/**
+ * A [posn] represents a coordinate (x, y).
+ * We use it to represent the pixel square with coordinates (x, y), which means
+ * that to get the position of the pixel square in pixels you need to multiply
+ * by [spec->unit].
+ */
 struct posn {
     unsigned x;
     unsigned y;
 };
 
+/**
+ * A [grid] represents a two-dimensional grid of pixel squares (each of size
+ * [unit] from [spec]) used in determining where an image can be placed.
+ * The coordinates in a grid refer to whole pixel squares.
+ * Grids are created using [grid_alloc].
+ * [grid_mark] marks a position on a grid, while [grid_marked] checks if a
+ * position is marked.
+ * The storage for [grid]s is allocated as needed by [grid_mark], and should be
+ * freed with [grid_free].
+ */
 struct grid {
-    unsigned s;
-    bool **posns;
+    unsigned s; //!< [s] is the current side length of the grid. Should be a power of two.
+    bool **posns; //!< [posns] records the marked positions.
 };
 
 struct input *input_alloc();
 void input_free(struct input *input);
+
+/**
+ * [input_cmp a b] returns 1 if the max side length of the [input] [a] is
+ * greater than the max side length of [b], -1 if it is less, and 0 if they are
+ * equal. It is intended for use with [qsort].
+ */
 int input_cmp(const void *a, const void *b);
 
+/**
+ * [posn_cmp] returns [true] if the coordinates of the [posn] [a] is
+ * less than the coordinates for [b] and false otherwise.
+ * First the maximums of the x and y values are compared; if equality occurs,
+ * then the individual components are compared.
+ * It is intended for use with [heap].
+ */
 bool posn_cmp(const void *a, const void *b);
 
 struct spec *spec_alloc();
 void spec_free(struct spec *spec);
 
 void parse_spec(struct spec *spec, const char *path);
+
+/**
+ * [parse_directive dst key stream] checks to makes ure the next directive in
+ * [stream] looks like "<key> <value>", then stores the value string into [dst].
+ * [dst] must have been allocated with enough memory to store [key].
+ * At most [MAX_SPEC_LINE_LEN] bytes are read.
+ */
 char *parse_directive(char *dst, const char *key, FILE *stream);
 
 struct grid *grid_alloc();
@@ -66,6 +127,9 @@ bool grid_marked(struct grid *grid, unsigned x, unsigned y);
 bool grid_mark(struct grid *grid, unsigned x, unsigned y);
 void grid_free(struct grid *grid);
 
+/**
+ * [isvalidname c] returns [true] iff [c] is a valid C identifier name.
+ */
 bool isvalidname(const char *c);
 
 int
@@ -85,6 +149,8 @@ main(int argc, char *argv[])
     parse_spec(spec, argv[1]);
 
     FreeImage_Initialise(false);
+
+    // Load the image data for each [input].
 
     int inputslen = 0;
     SIMPLEQ_FOREACH(input, &spec->inputs, entries) {
@@ -106,6 +172,8 @@ main(int argc, char *argv[])
         inputslen++;
     }
 
+    // [inputsarr] will store pointers to [input]s sorted in order of
+    // decreasing maximum side length.
     struct input **inputsarr = malloc(inputslen * sizeof(struct input *));
     assert(inputsarr != NULL);
 
@@ -115,14 +183,19 @@ main(int argc, char *argv[])
         i++;
     }
 
-    // sort the inputs into descending maximum side length
     qsort(inputsarr, inputslen, sizeof(struct input *), input_cmp);
 
+    // [grid] will record which positions in the packed image already contain
+    // an image (or a part of one). The minimum position unit is a square of
+    // pixels of side length [spec->unit].
     struct grid *grid = grid_alloc();
     assert(grid != NULL);
 
+    // [frontier] is a min-heap w.r.t. position coordinates which we will use
+    // to get the position we should next try to place an input image at.
     struct heap *frontier = heap_init(posn_cmp);
 
+    // [start] is the top-left corner, where we will try to place the first image.
     struct posn *start = malloc(sizeof(struct posn));
     assert(start != NULL);
 
@@ -131,32 +204,45 @@ main(int argc, char *argv[])
 
     assert(!heap_push(frontier, start));
 
+    // Pack all of the input images.
+    // For an overview of the heuristic, see the README.
     for (int i = 0; i < inputslen; i++) {
         struct input *input = inputsarr[i];
-        // width and height in terms of spec->unit
+        // Get the width and height in terms of [spec->unit].
         int wu = ceil((double)input->w / spec->unit);
         int hu = ceil((double)input->h / spec->unit);
 
+        // [posnqhd] will point to a queue of positions we have tried to insert
+        // the current image at but which didn't work, due to not enough space
+        // being available. At the end of the attempting-to-place loop, we add
+        // these back to the heap.
         SIMPLEQ_HEAD(posnqhd, posnq) posnqhd = SIMPLEQ_HEAD_INITIALIZER(posnqhd);
         struct posnq {
             struct posn *v;
             SIMPLEQ_ENTRY(posnq) entries;
         };
 
+        // Loop while we try to find somewhere to put this input.
         for (;;) {
             if (frontier->len == 0) {
-                // this should not be possible
+                // This should not be possible (means we've somehow ran out of
+                // places to try placing images at.
                 assert(false);
             }
 
+            // [top] is the position we will try to place this input image at.
             struct posn *top = heap_pop(frontier);
             assert(top != NULL);
 
+            // If the position has been filled by someone, there's no use
+            // keeping it in the heap.
             if (grid_marked(grid, top->x, top->y)) {
                 free(top);
                 continue;
             }
 
+            // Check to make sure there is enough space available at this
+            // position to place the image.
             bool failed = false;
             for (int y = top->y; !failed && y < top->y + hu; y++) {
                 for (int x = top->x; x < top->x + wu; x++) {
@@ -166,6 +252,10 @@ main(int argc, char *argv[])
                     }
                 }
             }
+            // If we failed, add this position to the queue of positions to add
+            // back to the heap after we're done.  We don't want to add it back
+            // immediately, obviously, because then we'd end up in an infinite
+            // loop...
             if (failed) {
                 struct posnq *posnq = malloc(sizeof(struct posnq *));
                 assert(posnq != NULL);
@@ -174,6 +264,8 @@ main(int argc, char *argv[])
                 continue;
             }
 
+            // We haven't failed--mark the positions now occupied by the input
+            // image!
             for (int y = top->y; y < top->y + hu; y++) {
                 for (int x = top->x; x < top->x + wu; x++) {
                     grid_mark(grid, x, y);
@@ -182,6 +274,9 @@ main(int argc, char *argv[])
 
             input->at = top;
 
+            // [a] and [b] are the new positions for subsequent images to try.
+            // One is at the north-east corner of this image, and the other is
+            // at the southwest corner.
             struct posn *a = malloc(sizeof(struct posn));
             assert(a != NULL);
 
@@ -200,6 +295,8 @@ main(int argc, char *argv[])
             break;
         }
 
+        // Add the positions that didn't have space for the image back to the
+        // queue, because they might work for a smaller image.
         struct posnq *posnq, *tposnq;
         SIMPLEQ_FOREACH_SAFE(posnq, &posnqhd, entries, tposnq) {
             assert(!heap_push(frontier, posnq->v));
@@ -207,10 +304,12 @@ main(int argc, char *argv[])
         }
     }
 
+    // Free the remaining positions.
     for (int i = 0; i < frontier->len; i++) {
         free(frontier->data[i]);
     }
 
+    // [wf] and [hf] will contain width and height of the packed image.
     int wf = 0;
     int hf = 0;
     SIMPLEQ_FOREACH(input, &spec->inputs, entries) {
@@ -244,6 +343,8 @@ main(int argc, char *argv[])
         goto close;
     }
 
+    // XXX This is a little messy. :(
+
     fprintf(hfh, "#ifndef %s_h\n", spec->name);
     fprintf(hfh, "#define %s_h\n\n", spec->name);
 
@@ -256,7 +357,7 @@ main(int argc, char *argv[])
     }
     fprintf(hfh, "};\n\n");
     
-    fprintf(hfh, "struct %s *%s_load (SDL_Renderer *renderer);\n", spec->name, spec->name);
+    fprintf(hfh, "struct %s *%s_load(SDL_Renderer *renderer);\n", spec->name, spec->name);
     fprintf(hfh, "void %s_unload (struct %s *pack);\n\n", spec->name, spec->name);
 
     fprintf(hfh, "#endif\n");
@@ -279,7 +380,7 @@ main(int argc, char *argv[])
     fprintf(cfh, "static const char *PNG_PATH = \"%s\";\n\n", spec->png);
 
     fprintf(cfh, "struct %s *\n", spec->name);
-    fprintf(cfh, "%s_load (SDL_Renderer *renderer)\n", spec->name);
+    fprintf(cfh, "%s_load(SDL_Renderer *renderer)\n", spec->name);
     fprintf(cfh, "{\n");
     fprintf(cfh, "    struct %s *pack = malloc(sizeof(struct %s));\n", spec->name, spec->name);
     fprintf(cfh, "    assert(pack != NULL);\n\n");
